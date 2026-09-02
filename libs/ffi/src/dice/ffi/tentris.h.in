@@ -1,0 +1,454 @@
+#ifndef TENTRIS_FFI_H
+#define TENTRIS_FFI_H
+
+#include <stdalign.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <sys/types.h>
+
+#include <dice/ffi/metall.h>
+
+#include <dice/logger/logger_interface.h>
+
+#ifdef TENTRIS_FFI_WITH_HYPERTRIE
+#include <dice/ffi/hypertrie.h>
+#endif//TENTRIS_FFI_WITH_HYPERTRIE
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+//// rdf4cpp bindings
+
+typedef enum rdf4cpp_lexical_form_lifetime {
+	RDF4CPP_LFL_STATIC    = 0, ///< returned string is expected to live for static duration
+	RDF4CPP_LFL_EPHEMERAL = 1, ///< returned string is short lived and needs to be copied immediately
+} rdf4cpp_lexical_form_lifetime;
+
+typedef enum rdf4cpp_term_type {
+    RDF4CPP_TT_BNODE    = 0, ///< term is Blank Node
+	RDF4CPP_TT_IRI      = 1, ///< term is IRI
+	RDF4CPP_TT_LITERAL  = 2, ///< term is Literal
+	RDF4CPP_TT_VARIABLE = 3, ///< term is Variable
+} rdf4cpp_term_type;
+
+typedef struct rdf4cpp_node {
+	uint64_t raw_handle;
+} rdf4cpp_node;
+
+typedef rdf4cpp_node rdf4cpp_literal;
+typedef rdf4cpp_node rdf4cpp_variable;
+typedef rdf4cpp_node rdf4cpp_iri;
+typedef rdf4cpp_node rdf4cpp_bnode;
+
+/**
+ * @return if the given term is a null-term
+ */
+bool rdf4cpp_term_null(rdf4cpp_node term);
+
+/**
+ * @return the type of the given term
+ */
+rdf4cpp_term_type rdf4cpp_type_of_term(rdf4cpp_node term);
+
+/**
+ * Creates a literal in the default node storage
+ *
+ * @param lexical lexical form of the literal
+ * @param datatype_iri optionally the datatype of the literal, defaults to xsd:string if language == NULL || language == ""
+ *      otherwise if language specified defaults to rdf:langString
+ * @param language language of the literal
+ *
+ * @return rdf4cpp_literal representing the given inputs. Returns null-literal if
+ *      either datatype_iri == rdf:langString && (language == NULL || language == "")
+ *      or literal lexical form is an invalid representation of the given datatype. Sets errno to EINVAL in both cases.
+ */
+rdf4cpp_literal rdf4cpp_make_literal(char const *lexical, rdf4cpp_iri const *datatype_iri, char const *language);
+
+/**
+ * Creates an IRI in the default node storage
+ */
+rdf4cpp_iri rdf4cpp_make_iri(char const *iri);
+
+/**
+ * Creates a blank node in the default node storage
+ */
+rdf4cpp_bnode rdf4cpp_make_bnode(char const *identifier);
+
+/**
+ * Creates a variable in the default node storage
+ */
+rdf4cpp_variable rdf4cpp_make_variable(char const *name);
+
+/**
+ * Returns the string IRI of the given IRI node
+ * @warning must not be called on the null-iri, otherwise behaviour is undefined
+ * @note string can be kept around as long as the object this iri came from is alive
+ */
+char const *rdf4cpp_iri_identifier(rdf4cpp_iri i);
+
+/**
+ * Returns the identifier of the given blank node
+ * @warning must not be called on the null-bnode, otherwise behaviour is undefined
+ * @note string can be kept around as long as the object this blank node came from is alive
+ */
+char const *rdf4cpp_bnode_identifier(rdf4cpp_bnode bn);
+
+/**
+ * Returns the name of the given variable
+ * @warning must bot be called on the null-variable, otherwise behaviour is undefined
+ * @note string can be kept around as long as the object this variable came from is alive
+ */
+char const *rdf4cpp_variable_name(rdf4cpp_variable var);
+
+/**
+ * Yields the lexical form of the given literal into buf
+ *
+ * @param lit the literal to get the lexical form for
+ * @param out out-parameter that gets pointed to the lexical form of the literal,
+ *      this will either point to the node storage the literal resides in or into an ephemeral buffer (the return value determines which one it is)
+ *      in case the return value is RDF4CPP_LFL_EPHEMERAL the string must be copied immediately. Otherwise it can be kept around
+ *      for as long as the object this node came from is alive.
+ *
+ * @return determines the type of storage the yielded string resides in, see param doc for out for more info
+ */
+rdf4cpp_lexical_form_lifetime rdf4cpp_literal_lexical_form(rdf4cpp_literal lit, char const **out);
+
+/**
+ * Returns the language of the given literal
+ * @note this will always point to static storage
+ * @note string can be kept around as long as the object this literal came from is alive
+ */
+char const *rdf4cpp_literal_lang(rdf4cpp_literal lit);
+
+/**
+ * Returns the datatype of the given literal
+ * @note return value can be kept around as long as the object this literal came from is alive
+ */
+rdf4cpp_iri rdf4cpp_literal_datatype(rdf4cpp_literal lit);
+
+/**
+ * A sink for bytes.
+ *
+ * @param data user supplied data as void *
+ * @param bytes array of bytes to sink
+ * @param size size of bytes array
+ */
+typedef void (*byte_sink)(void *data, char const *bytes, size_t size);
+
+/**
+ * Serializes the given term to the given sink
+ * by calling sink with the provided data and the bytes resulting from serialization
+ *
+ * @param term term to serialize
+ * @param sink callback to call with serialization result and user provided data
+ * @param data user provided data to pass to sink
+ */
+void rdf4cpp_serialize(rdf4cpp_node term, byte_sink sink, void *data);
+
+
+//// Errors
+
+typedef enum tentris_result {
+    TENTRIS_SUCCESS = 0,
+    TENTRIS_FAILURE = 1,
+} tentris_result;
+
+typedef enum tentris_iter_result {
+	TENTRIS_I_YIELDED = 0, ///< iterator yielded a value
+	TENTRIS_I_ENDED   = 1, ///< iterator reached the end without error
+	TENTRIS_I_FAILURE = 2, ///< iterator encountered an error
+} tentris_iter_result;
+
+typedef enum tentris_error_discriminant {
+	TENTRIS_E_INTERNAL          = 0, ///< unknown internal error
+	TENTRIS_E_TIMEOUT           = 1, ///< action timed out
+	TENTRIS_E_PARSE_ERROR       = 2, ///< given query could not be parsed
+	TENTRIS_E_MALFORMED_QUERY   = 3, ///< given query is malformed
+	TENTRIS_E_UNSUPPORTED_QUERY = 4, ///< given query not supported
+} tentris_error_discriminant;
+
+typedef struct tentris_timeout_error {
+	long timeout_duration_s;
+} tentris_timeout_error;
+
+typedef struct tentris_parse_error {
+	size_t line;
+	size_t col;
+	char const *parser_message;
+} tentris_parse_error;
+
+typedef struct tentris_malformed_query_error {
+	tentris_parse_error base;
+} tentris_malformed_query_error;
+
+typedef struct tentris_unsupported_query_error {
+	tentris_parse_error base;
+	char const *unsupported_operation;
+} tentris_unsupported_query_error;
+
+typedef struct tentris_error {
+	tentris_error_discriminant discriminant; ///< determines which of the below fields are active
+	union {
+		tentris_timeout_error timeout_data;                     ///< active if discriminant == TENTRIS_E_TIMEOUT
+		tentris_parse_error parse_data;                         ///< active if discriminant == TENTRIS_E_PARSE_ERROR
+		tentris_malformed_query_error malformed_query_data;     ///< active if discriminant == TENTRIS_E_MALFORMED_QUERY
+		tentris_unsupported_query_error unsupported_query_data; ///< active if discriminant == TENTRIS_E_UNSUPPORTED_QUERY
+	};
+} tentris_error;
+
+/**
+ * Like strerror(errno) for tentris_error
+ *
+ * @param error error to convert to string
+ * @warning used internal thread_local buffer to build the error message. The returned string must be consumed immediately and must never be freed.
+ */
+char const *tentris_strerror(tentris_error const *error);
+
+
+//// Triplestore
+
+/**
+ * A triplestore, either in-memory or persistent
+ */
+typedef struct tentris_triplestore {
+	alignas($TRIPLESTORE_ALIGN$) char opaque[$TRIPLESTORE_SIZE$];
+} tentris_triplestore;
+
+/**
+ * A single triple
+ */
+typedef struct tentris_triple {
+	rdf4cpp_node key[3];
+} tentris_triple;
+
+
+/**
+ * Constructs an in-memory triplestore at location ts
+ */
+void tentris_triplestore_init_in_memory(tentris_triplestore *ts);
+
+/**
+ * Finds or constructs a persistent triplestore named name using the metall manager opened for metall_path.
+ *
+ * @param ts where to construct the triplestore
+ * @param manager metall manager to create triplestore in
+ * @param name name of created triplestore
+ *
+ * @return TENTRIS_SUCCESS if successful otherwise returns TENTRIS_FAILURE and sets errno to one of the following values
+ *      - ENOMEM if the triplestore could not be created
+ */
+tentris_result tentris_triplestore_find_or_construct_persistent(tentris_triplestore *ts, metall_manager *manager, char const *name);
+
+/**
+ * Returns the assigned resource id for the given resource
+ * @param resource resource to fetch id for
+ */
+uint64_t tentris_triplestore_rdf_to_id(tentris_triplestore const *ts, rdf4cpp_node resource);
+
+/**
+ * Returns resource for given id
+ * @param id id of resource to fetch
+ */
+rdf4cpp_node tentris_triplestore_id_to_rdf(tentris_triplestore const *ts, uint64_t id);
+
+/**
+ * Loads ttl file into the given triplestore
+ *
+ * @param ts triplestore to load file into
+ * @param path path of ttl file
+ * @return TENTRIS_SUCCESS if successful otherwise returns TENTRIS_FAILURE and sets errno to indicate the specific IO error that occured
+ */
+tentris_result tentris_triplestore_load_ttl(tentris_triplestore *ts, char const *path);
+
+/**
+ * Adds a single statement/triple to the triplestore
+ * @param ts triplestore to add statement to
+ * @param triple statement to add
+ */
+void tentris_triplestore_add_statement(tentris_triplestore *ts, tentris_triple const *triple);
+
+/*
+ * Returns the number of triples in the given triplestore
+ * @param ts triplestore to fetch the size of
+ * @return size of ts
+ */
+size_t tentris_triplestore_size(tentris_triplestore const *ts);
+
+/**
+ * Destroy the given triplestore
+ * @note does not deallocate persistent triplestores, use tentris_triplestore_destroy_persistent
+ *      if you actually want to deallocate the triplestore from persistent memory
+ */
+void tentris_triplestore_destroy(tentris_triplestore *ts);
+
+/**
+ * Destroys and deallocates a triplestore created by tentris_triplestore_create_persistent
+ * @return TENTRIS_SUCCESS if destruction was successful otherwise returns TENTRIS_FAILURE and sets errno to one of the following values
+ *      - EINVAL if the given triplestore is not persistent
+ */
+tentris_result tentris_triplestore_destroy_persistent(metall_manager *manager, char const *name);
+
+
+//// SPARQL evaluation
+
+#define TENTRIS_NO_TIMEOUT UINT64_MAX
+
+/**
+ * A generator for solutions of sparql queries
+ */
+typedef struct tentris_solution_generator {
+	alignas($SOLUTION_GENERATOR_ALIGN$) char opaque[$SOLUTION_GENERATOR_SIZE$];
+} tentris_solution_generator;
+
+/**
+ * A single solution of a SPARQL query
+ */
+typedef struct tentris_solution {
+	rdf4cpp_node const *key; // array of length key_len
+	size_t key_len;
+	unsigned long count;
+} tentris_solution;
+
+typedef enum tentris_query_type {
+    TENTRIS_QT_SELECT            = 0,
+    TENTRIS_QT_ASK               = 1,
+    TENTRIS_QT_CONSTRUCT         = 2,
+    TENTRIS_QT_DESCRIBE          = 3,
+    TENTRIS_QT_DELETE            = 4,
+    TENTRIS_QT_INSERT            = 5,
+    TENTRIS_QT_DELETE_AND_INSERT = 6,
+    TENTRIS_QT_DELETE_DATA       = 7,
+    TENTRIS_QT_INSERT_DATA       = 8
+} tentris_query_type;
+
+/**
+ * Begins evaluation of the given SPARQL query
+ *
+ * @param ts triplestore to evalute the query on
+ * @param sparql_query_str string SPARQL query
+ * @param timeout_ms timeout for the evaluation, set to TENTRIS_NO_TIMEOUT for no timeout
+ * @param gen solution generator to construct for the given query
+ * @param error out parameter to indicate an error if it occured (only if return is TENTRIS_FAILURE). Can be set to NULL to discard error.
+ *
+ * @return TENTRIS_SUCCESS if query was prepared successfully and the solution generator was constructed, otherwise returns TENTRIS_FAILURE, populates error (if != NULL) and sets errno to one of the following values
+ *      - EINVAL if the query was invalid
+ *      - ENOTRECOVERABLE if an internal error occured
+ */
+tentris_result tentris_triplestore_eval_query(tentris_triplestore const *ts, char const *sparql_query_str, unsigned long timeout_ms, tentris_solution_generator *gen, tentris_error *error);
+
+/**
+ * Evaluates a SPARQL update query
+ *
+ * @param ts triplestore to evalute the query on
+ * @param sparql_update_str string SPARQL update query
+ * @param error out parameter to indicate an error if it occured (only if return is TENTRIS_FAILURE). Can be set to NULL to discard error.
+ *
+ * @return TENTRIS_SUCCESS if the update was successful, otherwise returns TENTRIS_FAILURE, populates error (if != NULL) and sets errno to one of the following values
+ *      - EINVAL if the update was invalid or is a compound of multiple updates, as they are not supported yet
+ *      - ETIMEDOUT if a timeout occured during evaluation
+ *      - ENOTRECOVERABLE if an internal error occured
+ */
+tentris_result tentris_triplestore_eval_update(tentris_triplestore *ts, char const *sparql_update_str, unsigned long timeout_ms, tentris_error *error);
+
+/**
+ * Evaluates a single SPARQL INSERT DATA or DELETE DATA query using a dedicated parser optimized for big inputs
+ * @param ts triplestore to evalute the query on
+ * @param sparql_update_str string SPARQL INSERT DATA or DELETE DATA update
+ * @param error out parameter to indicate an error if it occured (only if return is TENTRIS_FAILURE). Can be set to NULL to discard error.
+ *
+ * @return TENTRIS_SUCCESS if the update was successful, otherwise returns TENTRIS_FAILURE, populates error (if != NULL) and sets errno to one of the following values
+ *      - EINVAL if the update was invalid or is not a single INSERT DATA or DELETE DATA
+ *      - ETIMEDOUT if a timeout occured during evaluation
+ *      - ENOTRECOVERABLE if an internal error occured
+ */
+tentris_result tentris_triplestore_eval_insert_or_delete_data(tentris_triplestore *ts, char const *sparql_update_str, unsigned long timeout_ms, tentris_error *error);
+
+/**
+ * Advances the solution generator onto the next solution
+ *
+ * @param gen generator to advance
+ * @param out_solution where to write the potentially yielded solution
+ * @param error out parameter to indicate an error if it occured (only if return is TENTRIS_FAILURE). Can be set to NULL to discard error.
+ *
+ * @return If a solution was yielded return TENTRIS_I_YIELDED, otherwise if the generator does not have a next solution returns TENTRIS_I_ENDED.
+ *       In case of an error returns TENTRIS_I_FAILURE, populates error (if != NULL) and sets errno to one of the following values:
+ *          - ETIMEDOUT if query evaluation timed out
+ *          - ENOTRECOVERABLE if an internal error occured
+ *
+ * @warning yielded solutions point into the generator itself and will be invalidated on the next call to this function or generator destruction
+ */
+tentris_iter_result tentris_solution_generator_next(tentris_solution_generator *gen, tentris_solution *out_solution, tentris_error *error);
+
+/**
+ * Returns the projected variabled of the given generator
+ *
+ * @param gen generator to fetch the projected variables from
+ * @param out_proj_vars out parameter that will be set to point to an array of size *out_proj_vars_size
+ * @param out_proj_vars_size out parameter that will be set to the array length of *out_proj_vars
+ *
+ * @warning the yielded array points into the given generator and will be invalidated on destruction
+ */
+void tentris_solution_generator_get_projected_variables(tentris_solution_generator const *gen, rdf4cpp_variable const **out_proj_vars, size_t *out_proj_vars_size);
+
+/**
+ * Returns the query type the given generator is evaluating
+ */
+tentris_query_type tentris_solution_generator_get_query_type(tentris_solution_generator const *gen);
+
+/**
+ * Destroys the given generator
+ */
+void tentris_solution_generator_destroy(tentris_solution_generator *gen);
+
+
+//// Iteration
+
+/**
+ * Iterator over triples in a triplestore
+ */
+typedef struct tentris_triplestore_iterator {
+    alignas($TRIPLESTORE_ITER_ALIGN$) char opaque[$TRIPLESTORE_ITER_SIZE$];
+} tentris_triplestore_iterator;
+
+/**
+ * Begins iteration of the given triplestore
+ *
+ * @param ts triplestore to iterate
+ * @param iter where to construct an iterator for the given triplestore
+ */
+void tentris_triplestore_iterate(tentris_triplestore const *ts, tentris_triplestore_iterator *iter);
+
+/**
+ * Advances the given iterator onto the next triple
+ *
+ * @param iter iterator to advance
+ * @param out_triple will be set to point to the yielded triple
+ *
+ * @return TENTRIS_I_YIELDED if the iterator yielded a triple, otherwise TENTRIS_I_ENDED.
+ * @note this function will never return TENTRIS_I_FAILURE
+ *
+ * @warning a yielded *out_triple points into the iterator and will be invalidated on the next call to this function or iterator destruction
+ */
+tentris_iter_result tentris_triplestore_iterator_next(tentris_triplestore_iterator *iter, tentris_triple const **out_triple);
+
+/**
+ * Destroys the given iterator
+ */
+void tentris_triplestore_iterator_destroy(tentris_triplestore_iterator *iter);
+
+#ifdef TENTRIS_FFI_WITH_HYPERTRIE
+/**
+ * Returns the underlying hypertrie of the triplestore
+ *
+ * @warning warning the returned value does not contribute to the synchronization of the triplestore. All parallel write access are undefined behaviour.
+ */
+hypertrie const *tentris_triplestore_get_hypertrie(tentris_triplestore const *ts);
+#endif//TENTRIS_FFI_WITH_HYPERTRIE
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // TENTRIS_FFI_H

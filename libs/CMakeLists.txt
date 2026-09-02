@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.21)
+add_subdirectory(node-wrapper)
+add_subdirectory(query)
+add_subdirectory(tentris-param-allocator)
+add_subdirectory(tentris-hypertrie-template-instantiation)
+add_subdirectory(sparql)
+add_subdirectory(tentris)
+add_subdirectory(metall-node-storage)
+add_subdirectory(triplestore)
+add_subdirectory(logger)
+
+if (BUILD_FFI)
+    add_subdirectory(ffi)
+endif ()
+
+include(${CMAKE_SOURCE_DIR}/cmake/install_components.cmake)
+install_package()

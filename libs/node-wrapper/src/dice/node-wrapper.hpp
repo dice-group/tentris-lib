@@ -1,0 +1,5 @@
+#ifndef TENTRIS_QUERY_NODE_WRAPPER_HEADER_HPP
+#define TENTRIS_QUERY_NODE_WRAPPER_HEADER_HPP
+#include <dice/node-wrapper/NodeWrapper.hpp>
+
+#endif  //TENTRIS_QUERY_NODE_WRAPPER_HEADER_HPP

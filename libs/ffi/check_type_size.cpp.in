@@ -1,0 +1,41 @@
+#include <fstream>
+
+#include <dice/triplestore/TripleStore.hpp>
+#include <dice/ffi/SolutionGeneratorImpl.hpp>
+#include <dice/logger.hpp>
+
+extern "C" void tentris_log(tentris_log_level, char const *, char const *) {}
+
+inline constexpr std::array<std::pair<std::string_view, size_t>, 6> replace_templates{
+		std::make_pair("$TRIPLESTORE_SIZE$", sizeof(dice::triplestore::TripleStore)),
+		std::make_pair("$TRIPLESTORE_ALIGN$", alignof(dice::triplestore::TripleStore)),
+		std::make_pair("$SOLUTION_GENERATOR_SIZE$", sizeof(SolutionGeneratorImpl)),
+		std::make_pair("$SOLUTION_GENERATOR_ALIGN$", alignof(SolutionGeneratorImpl)),
+		std::make_pair("$TRIPLESTORE_ITER_SIZE$", sizeof(IteratorImpl)),
+		std::make_pair("$TRIPLESTORE_ITER_ALIGN$", alignof(IteratorImpl))};
+
+void replace(std::string &str, std::pair<std::string_view, size_t> const &replace_template) {
+	if (auto const pos = str.find(replace_template.first); pos != std::string::npos) {
+		str.replace(pos, replace_template.first.size(), std::to_string(replace_template.second));
+	}
+}
+
+int main() {
+	std::string input;
+
+	{
+		std::ifstream ifs{"@CMAKE_CURRENT_SOURCE_DIR@/src/dice/ffi/tentris.h.in"};
+		std::copy(std::istreambuf_iterator<char>{ifs}, std::istreambuf_iterator<char>{}, std::back_inserter(input));
+	}
+
+	for (auto const &replace_template : replace_templates) {
+		replace(input, replace_template);
+	}
+
+	{
+		std::ofstream ofs{"@CMAKE_CURRENT_SOURCE_DIR@/src/dice/ffi/tentris.h"};
+		std::copy(input.begin(), input.end(), std::ostreambuf_iterator<char>{ofs});
+	}
+
+	std::ofstream ofs{"@CMAKE_CURRENT_BINARY_DIR@/generating-done.cpp"};
+}
